@@ -8,12 +8,16 @@ using BaGet.AWS.Extensions;
 using BaGet.Azure.Configuration;
 using BaGet.Azure.Extensions;
 using BaGet.Azure.Search;
+using BaGet.Core.Authentication;
 using BaGet.Core.Configuration;
 using BaGet.Core.Entities;
 using BaGet.Core.Extensions;
+using BaGet.Core.Indexing;
 using BaGet.Core.Mirror;
+using BaGet.Core.Search;
 using BaGet.Core.Server.Extensions;
-using BaGet.Core.Services;
+using BaGet.Core.State;
+using BaGet.Core.Storage;
 using BaGet.Database.MySql;
 using BaGet.Database.PostgreSql;
 using BaGet.Database.Sqlite;
@@ -159,6 +163,7 @@ namespace BaGet.Extensions
 
         public static IServiceCollection AddStorageProviders(this IServiceCollection services)
         {
+            services.AddSingleton<NullStorageService>();
             services.AddTransient<FileStorageService>();
             services.AddTransient<IPackageStorageService, PackageStorageService>();
             services.AddTransient<ISymbolStorageService, SymbolStorageService>();
@@ -185,6 +190,9 @@ namespace BaGet.Extensions
                     case StorageType.GoogleCloud:
                         return provider.GetRequiredService<GoogleCloudStorageService>();
 
+                    case StorageType.Null:
+                        return provider.GetRequiredService<NullStorageService>();
+
                     default:
                         throw new InvalidOperationException(
                             $"Unsupported storage service: {options.Value.Storage.Type}");
@@ -208,6 +216,9 @@ namespace BaGet.Extensions
                     case SearchType.Azure:
                         return provider.GetRequiredService<AzureSearchService>();
 
+                    case SearchType.Null:
+                        return provider.GetRequiredService<NullSearchService>();
+
                     default:
                         throw new InvalidOperationException(
                             $"Unsupported search service: {options.Value.Type}");
@@ -215,6 +226,7 @@ namespace BaGet.Extensions
             });
 
             services.AddTransient<DatabaseSearchService>();
+            services.AddSingleton<NullSearchService>();
             services.AddAzureSearch();
 
             return services;

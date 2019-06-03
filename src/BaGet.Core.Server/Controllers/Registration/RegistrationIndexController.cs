@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BaGet.Core.Entities;
 using BaGet.Core.Mirror;
-using BaGet.Core.Services;
+using BaGet.Core.State;
 using BaGet.Extensions;
 using BaGet.Protocol;
 using Microsoft.AspNetCore.Mvc;
@@ -82,6 +82,7 @@ namespace BaGet.Controllers.Registration
                     listed: package.Listed,
                     minClientVersion: package.MinClientVersion,
                     packageContent: Url.PackageDownload(package.Id, package.Version),
+                    packageTypes: package.PackageTypes.Select(t => t.Name).ToList(),
                     projectUrl: package.ProjectUrlString,
                     repositoryUrl: package.RepositoryUrlString,
                     repositoryType: package.RepositoryType,
