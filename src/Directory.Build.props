@@ -2,8 +2,12 @@
 
   <PropertyGroup>
     <Product>BaGet</Product>
+
+    <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-prerelease</PackageVersion>
     <PackageProjectUrl>https://loic-sharma.github.io/BaGet/</PackageProjectUrl>
-    <PackageLicenseUrl>https://github.com/loic-sharma/BaGet/blob/master/LICENSE</PackageLicenseUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIconUrl>https://raw.githubusercontent.com/NuGet/Media/master/Images/MainLogo/256x256/nuget_256.png</PackageIconUrl>
+
     <RepositoryUrl>https://github.com/loic-sharma/BaGet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -12,7 +16,7 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
-    <LangVersion>7.1</LangVersion>
+    <LangVersion>7.2</LangVersion>
     <NoWarn>1591</NoWarn>
   </PropertyGroup>
 
@@ -29,12 +33,12 @@
     <NuGetPackageVersion>5.0.0-rtm.5856</NuGetPackageVersion>
   </PropertyGroup>
 
-  <ItemGroup Condition="$(DOTNET_RUNNING_IN_CONTAINER) == ''">
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0-beta-63127-02" PrivateAssets="All"/>
+  <ItemGroup Condition=" '$(TargetFramework)' == 'net461' ">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.0-preview.2" />
   </ItemGroup>
 
-  <ItemGroup Condition="$(IsPackable) == 'true' AND $(DOTNET_RUNNING_IN_CONTAINER) == ''">
-    <PackageReference Include="Nerdbank.GitVersioning" Version="2.3.105" PrivateAssets="all" />
+  <ItemGroup Condition="$(DOTNET_RUNNING_IN_CONTAINER) == ''">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0-beta-63127-02" PrivateAssets="All"/>
   </ItemGroup>
 
 </Project>

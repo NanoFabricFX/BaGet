@@ -2,11 +2,10 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using BaGet.Core.Entities;
 using Microsoft.Extensions.Logging;
 using NuGet.Versioning;
 
-namespace BaGet.Core.Storage
+namespace BaGet.Core
 {
     public class PackageStorageService : IPackageStorageService
     {
@@ -40,7 +39,7 @@ namespace BaGet.Core.Storage
             nuspecStream = nuspecStream ?? throw new ArgumentNullException(nameof(nuspecStream));
 
             var lowercasedId = package.Id.ToLowerInvariant();
-            var lowercasedNormalizedVersion = package.VersionString.ToLowerInvariant();
+            var lowercasedNormalizedVersion = package.NormalizedVersionString.ToLowerInvariant();
 
             var packagePath = PackagePath(lowercasedId, lowercasedNormalizedVersion);
             var nuspecPath = NuspecPath(lowercasedId, lowercasedNormalizedVersion);
@@ -154,7 +153,22 @@ namespace BaGet.Core.Storage
             var lowercasedNormalizedVersion = version.ToNormalizedString().ToLowerInvariant();
             var path = pathFunc(lowercasedId, lowercasedNormalizedVersion);
 
-            return await _storage.GetAsync(path, cancellationToken);
+            try
+            {
+                return await _storage.GetAsync(path, cancellationToken);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // The "packages" prefix was lowercased, which was a breaking change
+                // on filesystems that are case sensitive. Handle this case to help
+                // users migrate to the latest version of BaGet.
+                // See https://github.com/loic-sharma/BaGet/issues/298
+                _logger.LogError(
+                    $"Unable to find the '{PackagesPathPrefix}' folder. " +
+                    "If you've recently upgraded BaGet, please make sure this folder starts with a lowercased letter. " +
+                    "For more information, please see https://github.com/loic-sharma/BaGet/issues/298");
+                throw;
+            }
         }
 
         private string PackagePath(string lowercasedId, string lowercasedNormalizedVersion)

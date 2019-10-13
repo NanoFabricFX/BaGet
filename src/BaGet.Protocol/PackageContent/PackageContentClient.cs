@@ -1,55 +1,51 @@
 using System;
 using System.IO;
-using System.Net;
-using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
+using BaGet.Protocol.Models;
+using NuGet.Versioning;
 
 namespace BaGet.Protocol
 {
-    /// <inheritdoc />
-    public class PackageContentClient : IPackageContentClient
+    public partial class NuGetClientFactory
     {
-        private readonly HttpClient _httpClient;
-
-        /// <summary>
-        /// Create a new Package Content client.
-        /// </summary>
-        /// <param name="httpClient">The HTTP client used to send requests.</param>
-        public PackageContentClient(HttpClient httpClient)
+        private class PackageContentClient : IPackageContentClient
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        }
+            private readonly NuGetClientFactory _clientfactory;
 
-        /// <inheritdoc />
-        public async Task<PackageVersions> GetPackageVersionsOrNullAsync(string url)
-        {
-            var response = await _httpClient.DeserializeUrlAsync<PackageVersions>(url);
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            public PackageContentClient(NuGetClientFactory clientFactory)
             {
-                return null;
+                _clientfactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
             }
 
-            return response.GetResultOrThrow();
-        }
+            public async Task<Stream> GetPackageContentStreamOrNullAsync(
+                string packageId,
+                NuGetVersion packageVersion,
+                CancellationToken cancellationToken = default)
+            {
+                var client = await _clientfactory.GetPackageContentClientAsync(cancellationToken);
 
-        /// <inheritdoc />
-        public async Task<Stream> GetPackageContentStreamAsync(string url)
-        {
-            var response = await _httpClient.GetAsync(url);
+                return await client.GetPackageContentStreamOrNullAsync(packageId, packageVersion, cancellationToken);
+            }
 
-            response.EnsureSuccessStatusCode();
+            public async Task<Stream> GetPackageManifestStreamOrNullAsync(
+                string packageId,
+                NuGetVersion packageVersion,
+                CancellationToken cancellationToken = default)
+            {
+                var client = await _clientfactory.GetPackageContentClientAsync(cancellationToken);
 
-            return await response.Content.ReadAsStreamAsync();
-        }
+                return await client.GetPackageManifestStreamOrNullAsync(packageId, packageVersion, cancellationToken);
+            }
 
-        /// <inheritdoc />
-        public async Task<Stream> GetPackageManifestStreamAsync(string url)
-        {
-            var response = await _httpClient.GetAsync(url);
+            public async Task<PackageVersionsResponse> GetPackageVersionsOrNullAsync(
+                string packageId,
+                CancellationToken cancellationToken = default)
+            {
+                var client = await _clientfactory.GetPackageContentClientAsync(cancellationToken);
 
-            response.EnsureSuccessStatusCode();
-
-            return await response.Content.ReadAsStreamAsync();
+                return await client.GetPackageVersionsOrNullAsync(packageId, cancellationToken);
+            }
         }
     }
 }

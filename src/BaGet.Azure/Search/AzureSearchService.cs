@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using BaGet.Core.Entities;
-using BaGet.Core.Indexing;
-using BaGet.Core.Search;
+using BaGet.Core;
+using BaGet.Protocol.Models;
 using Microsoft.Azure.Search;
 using NuGet.Versioning;
 
@@ -17,31 +18,211 @@ namespace BaGet.Azure.Search
     {
         private readonly BatchIndexer _indexer;
         private readonly SearchIndexClient _searchClient;
+        private readonly IUrlGenerator _url;
         private readonly IFrameworkCompatibilityService _frameworks;
 
         public AzureSearchService(
             BatchIndexer indexer,
             SearchIndexClient searchClient,
+            IUrlGenerator url,
             IFrameworkCompatibilityService frameworks)
         {
             _indexer = indexer ?? throw new ArgumentNullException(nameof(indexer));
             _searchClient = searchClient ?? throw new ArgumentNullException(nameof(searchClient));
+            _url = url ?? throw new ArgumentNullException(nameof(url));
             _frameworks = frameworks ?? throw new ArgumentNullException(nameof(frameworks));
         }
 
-        public Task IndexAsync(Package package) => _indexer.IndexAsync(package.Id);
+        public async Task IndexAsync(Package package, CancellationToken cancellationToken)
+        {
+            await _indexer.IndexAsync(package.Id);
+        }
 
-        public async Task<IReadOnlyList<SearchResult>> SearchAsync(
-            string query,
+        public async Task<SearchResponse> SearchAsync(
+            string query = null,
+            int skip = 0,
+            int take = 20,
+            bool includePrerelease = true,
+            bool includeSemVer2 = true,
+            CancellationToken cancellationToken = default)
+        {
+            return await SearchAsync(
+                query,
+                skip,
+                take,
+                includePrerelease,
+                includeSemVer2,
+                packageType: null,
+                framework: null,
+                cancellationToken);
+        }
+
+        public async Task<SearchResponse> SearchAsync(
+            string query = null,
             int skip = 0,
             int take = 20,
             bool includePrerelease = true,
             bool includeSemVer2 = true,
             string packageType = null,
-            string framework = null)
+            string framework = null,
+            CancellationToken cancellationToken = default)
         {
-            query = BuildSeachQuery(query, packageType, framework);
+            var searchText = BuildSeachQuery(query, packageType, framework);
+            var filter = BuildSearchFilter(includePrerelease, includeSemVer2);
+            var parameters = new SearchParameters
+            {
+                IncludeTotalResultCount = true,
+                QueryType = QueryType.Full,
+                Skip = skip,
+                Top = take,
+                Filter = filter
+            };
 
+            var response = await _searchClient.Documents.SearchAsync<PackageDocument>(searchText, parameters, cancellationToken: cancellationToken);
+
+            var results = new List<SearchResult>();
+
+            foreach (var result in response.Results)
+            {
+                var document = result.Document;
+                var versions = new List<SearchResultVersion>();
+
+                if (document.Versions.Length != document.VersionDownloads.Length)
+                {
+                    throw new InvalidOperationException($"Invalid document {document.Key} with mismatched versions");
+                }
+
+                for (var i = 0; i < document.Versions.Length; i++)
+                {
+                    var version = NuGetVersion.Parse(document.Versions[i]);
+
+                    versions.Add(new SearchResultVersion
+                    {
+                        RegistrationLeafUrl = _url.GetRegistrationLeafUrl(document.Id, version),
+                        Version = document.Versions[i],
+                        Downloads = long.Parse(document.VersionDownloads[i]),
+                    });
+                }
+
+                results.Add(new SearchResult
+                {
+                    PackageId =  document.Id,
+                    Version = document.Version,
+                    Description = document.Description,
+                    Authors = document.Authors,
+                    IconUrl = document.IconUrl,
+                    LicenseUrl = document.LicenseUrl,
+                    ProjectUrl = document.ProjectUrl,
+                    RegistrationIndexUrl = _url.GetRegistrationIndexUrl(document.Id),
+                    Summary = document.Summary,
+                    Tags = document.Tags,
+                    Title = document.Title,
+                    TotalDownloads = document.TotalDownloads,
+                    Versions = versions
+                });
+            }
+
+            return new SearchResponse
+            {
+                TotalHits = response.Count.Value,
+                Data = results,
+                Context = SearchContext.Default(_url.GetPackageMetadataResourceUrl())
+            };
+        }
+
+        public async Task<AutocompleteResponse> AutocompleteAsync(
+            string query = null,
+            AutocompleteType type = AutocompleteType.PackageIds,
+            int skip = 0,
+            int take = 20,
+            bool includePrerelease = true,
+            bool includeSemVer2 = true,
+            CancellationToken cancellationToken = default)
+        {
+            // TODO: Do a prefix search on the package id field.
+            // TODO: Support versions autocomplete.
+            // TODO: Support prerelease and semver2 filters.
+            // See: https://github.com/loic-sharma/BaGet/issues/291
+            var parameters = new SearchParameters
+            {
+                IncludeTotalResultCount = true,
+                Skip = skip,
+                Top = take,
+            };
+
+            var response = await _searchClient.Documents.SearchAsync<PackageDocument>(query, parameters, cancellationToken: cancellationToken);
+            var results = response.Results
+                .Select(r => r.Document.Id)
+                .ToList()
+                .AsReadOnly();
+
+            return new AutocompleteResponse
+            {
+                TotalHits = response.Count.Value,
+                Data = results,
+                Context = AutocompleteContext.Default
+            };
+        }
+
+        public async Task<DependentsResponse> FindDependentsAsync(
+            string packageId,
+            int skip = 0,
+            int take = 20,
+            CancellationToken cancellationToken = default)
+        {
+            // TODO: Escape packageId.
+            var query = $"dependencies:{packageId.ToLowerInvariant()}";
+            var parameters = new SearchParameters
+            {
+                IncludeTotalResultCount = true,
+                QueryType = QueryType.Full,
+                Skip = skip,
+                Top = take,
+            };
+
+            var response = await _searchClient.Documents.SearchAsync<PackageDocument>(query, parameters, cancellationToken: cancellationToken);
+            var results = response.Results
+                .Select(r => r.Document.Id)
+                .ToList()
+                .AsReadOnly();
+
+            return new DependentsResponse
+            {
+                TotalHits = response.Count.Value,
+                Data = results
+            };
+        }
+
+        private string BuildSeachQuery(string query, string packageType, string framework)
+        {
+            var queryBuilder = new StringBuilder();
+
+            if (!string.IsNullOrEmpty(query))
+            {
+                queryBuilder.Append(query.TrimEnd().TrimEnd('*'));
+                queryBuilder.Append('*');
+            }
+
+            if (!string.IsNullOrEmpty(packageType))
+            {
+                queryBuilder.Append(" +packageTypes:");
+                queryBuilder.Append(packageType);
+            }
+
+            if (!string.IsNullOrEmpty(framework))
+            {
+                var frameworks = _frameworks.FindAllCompatibleFrameworks(framework);
+
+                queryBuilder.Append(" +frameworks:(");
+                queryBuilder.Append(string.Join(" ", frameworks));
+                queryBuilder.Append(')');
+            }
+
+            return queryBuilder.ToString();
+        }
+
+        private string BuildSearchFilter(bool includePrerelease, bool includeSemVer2)
+        {
             var searchFilters = SearchFilters.Default;
 
             if (includePrerelease)
@@ -54,103 +235,7 @@ namespace BaGet.Azure.Search
                 searchFilters |= SearchFilters.IncludeSemVer2;
             }
 
-            var search = await _searchClient.Documents.SearchAsync<PackageDocument>(query, new SearchParameters
-            {
-                QueryType = QueryType.Full,
-                Skip = skip,
-                Top = take,
-                Filter = $"searchFilters eq '{searchFilters}'"
-            });
-
-            var results = new List<SearchResult>();
-
-            foreach (var result in search.Results)
-            {
-                var document = result.Document;
-                var versions = new List<SearchResultVersion>();
-
-                if (document.Versions.Length != document.VersionDownloads.Length)
-                {
-                    throw new InvalidOperationException($"Invalid document {document.Key} with mismatched versions");
-                }
-
-                for (var i = 0; i < document.Versions.Length; i++)
-                {
-                    versions.Add(new SearchResultVersion(
-                        NuGetVersion.Parse(document.Versions[i]),
-                        long.Parse(document.VersionDownloads[i])));
-                }
-
-                results.Add(new SearchResult
-                {
-                    Id = document.Id,
-                    Version = NuGetVersion.Parse(document.Version),
-                    Description = document.Description,
-                    Authors = document.Authors,
-                    IconUrl = document.IconUrl,
-                    LicenseUrl = document.LicenseUrl,
-                    Summary = document.Summary,
-                    Tags = document.Tags,
-                    Title = document.Title,
-                    TotalDownloads = document.TotalDownloads,
-                    Versions = versions.AsReadOnly()
-                });
-            }
-
-            return results.AsReadOnly();
-        }
-
-        private string BuildSeachQuery(string query, string packageType, string framework)
-        {
-            if (!string.IsNullOrEmpty(query))
-            {
-                query = query.TrimEnd().TrimEnd('*') + '*';
-            }
-
-            if (!string.IsNullOrEmpty(packageType))
-            {
-                query = $"+packageTypes:{packageType} {query}";
-            }
-
-            if (!string.IsNullOrEmpty(framework))
-            {
-                var frameworks = _frameworks.FindAllCompatibleFrameworks(framework);
-
-                query = $"+frameworks:({string.Join(" ", frameworks)}) {query}";
-            }
-
-            return query;
-        }
-
-        public async Task<IReadOnlyList<string>> AutocompleteAsync(string query, int skip = 0, int take = 20)
-        {
-            var search = await _searchClient.Documents.SearchAsync<PackageDocument>(query, new SearchParameters
-            {
-                Skip = skip,
-                Top = take,
-            });
-
-            return search.Results
-                .Select(r => r.Document.Id)
-                .ToList()
-                .AsReadOnly();
-        }
-
-        public async Task<IReadOnlyList<string>> FindDependentsAsync(string packageId, int skip = 0, int take = 20)
-        {
-            // TODO: Escape packageId.
-            var query = $"dependencies:{packageId.ToLowerInvariant()}";
-            var search = await _searchClient.Documents.SearchAsync<PackageDocument>(query, new SearchParameters
-            {
-                QueryType = QueryType.Full,
-                Skip = skip,
-                Top = take,
-            });
-
-            return search.Results
-                .Select(r => r.Document.Id)
-                .ToList()
-                .AsReadOnly();
+            return $"searchFilters eq '{searchFilters}'";
         }
     }
 }

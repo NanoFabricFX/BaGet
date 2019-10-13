@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace BaGet.Core.Configuration
+namespace BaGet.Core
 {
     public class DatabaseOptions
     {
@@ -15,6 +15,8 @@ namespace BaGet.Core.Configuration
         MySql,
         Sqlite,
         SqlServer,
-        PostgreSql
+        PostgreSql,
+
+        AzureTable,
     }
 }

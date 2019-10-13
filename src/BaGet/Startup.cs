@@ -1,7 +1,6 @@
 using System;
 using BaGet.Configuration;
-using BaGet.Core.Configuration;
-using BaGet.Core.Entities;
+using BaGet.Core;
 using BaGet.Extensions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -43,7 +42,7 @@ namespace BaGet
 
             // Run migrations if necessary.
             var options = Configuration.Get<BaGetOptions>();
-            if (options.RunMigrationsAtStartup)
+            if (options.RunMigrationsAtStartup && options.Database.Type != DatabaseType.AzureTable)
             {
                 using (var scope = app.ApplicationServices.CreateScope())
                 {
@@ -67,7 +66,7 @@ namespace BaGet
                     .MapPackagePublishRoutes()
                     .MapSymbolRoutes()
                     .MapSearchRoutes()
-                    .MapRegistrationRoutes()
+                    .MapPackageMetadataRoutes()
                     .MapPackageContentRoutes();
             });
 

@@ -2,7 +2,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BaGet.Core.Entities
+namespace BaGet.Core
 {
     public abstract class AbstractContext<TContext> : DbContext, IContext where TContext : DbContext
     {
@@ -47,17 +47,21 @@ namespace BaGet.Core.Entities
         {
             package.HasKey(p => p.Key);
             package.HasIndex(p => p.Id);
-            package.HasIndex(p => new { p.Id, p.VersionString })
+            package.HasIndex(p => new { p.Id, p.NormalizedVersionString })
                 .IsUnique();
 
             package.Property(p => p.Id)
                 .HasMaxLength(MaxPackageIdLength)
                 .IsRequired();
 
-            package.Property(p => p.VersionString)
+            package.Property(p => p.NormalizedVersionString)
                 .HasColumnName("Version")
                 .HasMaxLength(MaxPackageVersionLength)
                 .IsRequired();
+
+            package.Property(p => p.OriginalVersionString)
+                .HasColumnName("OriginalVersion")
+                .HasMaxLength(MaxPackageVersionLength);
 
             package.Property(p => p.Authors)
                 .HasConversion(StringArrayToJsonConverter.Instance)

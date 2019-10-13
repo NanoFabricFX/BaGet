@@ -1,12 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using BaGet.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-namespace BaGet.Core.Mirror
+namespace BaGet.Core
 {
     public class DownloadsImporter
     {
@@ -39,7 +38,7 @@ namespace BaGet.Core.Mirror
                 foreach (var package in await GetBatch(batch))
                 {
                     var packageId = package.Id.ToLowerInvariant();
-                    var packageVersion = package.VersionString.ToLowerInvariant();
+                    var packageVersion = package.NormalizedVersionString.ToLowerInvariant();
 
                     if (!packageDownloads.ContainsKey(packageId) ||
                         !packageDownloads[packageId].ContainsKey(packageVersion))

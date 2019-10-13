@@ -1,3 +1,4 @@
+import { config } from './config';
 import { Icon } from 'office-ui-fabric-react/lib/Icon';
 import { Checkbox, Dropdown, IDropdownOption, SelectableOptionMenuItemType } from 'office-ui-fabric-react/lib/index';
 import * as React from 'react';
@@ -157,7 +158,11 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
         {this.state.items.map(value => (
           <div key={value.id} className="row search-result">
             <div className="col-sm-1 hidden-xs hidden-sm">
-              <img src={value.iconUrl || this.defaultIconUrl} className="package-icon img-responsive" onError={this.loadDefaultIcon} />
+              <img
+                src={value.iconUrl || this.defaultIconUrl}
+                className="package-icon img-responsive"
+                onError={this.loadDefaultIcon}
+                alt="The package icon" />
             </div>
             <div className="col-sm-11">
               <div>
@@ -248,7 +253,7 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
       .map(k => `${k}=${encodeURIComponent(parameters[k])}`)
       .join('&');
 
-    return `/v3/search?${queryString}`;
+    return `${config.apiUrl}/v3/search?${queryString}`;
   }
 
   private loadDefaultIcon = (e: React.SyntheticEvent<HTMLImageElement>) => {

@@ -1,16 +1,12 @@
 using System;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using BaGet.Core.Search;
-using BaGet.Extensions;
-using BaGet.Protocol;
+using BaGet.Core;
+using BaGet.Protocol.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BaGet.Controllers
 {
-    using ProtocolSearchResult = Protocol.SearchResult;
-    using QuerySearchResult = Core.Search.SearchResult;
-
     public class SearchController : Controller
     {
         private readonly ISearchService _searchService;
@@ -20,7 +16,7 @@ namespace BaGet.Controllers
             _searchService = searchService ?? throw new ArgumentNullException(nameof(searchService));
         }
 
-        public async Task<ActionResult<SearchResponse>> Get(
+        public async Task<ActionResult<SearchResponse>> SearchAsync(
             [FromQuery(Name = "q")] string query = null,
             [FromQuery]int skip = 0,
             [FromQuery]int take = 20,
@@ -29,63 +25,42 @@ namespace BaGet.Controllers
 
             // These are unofficial parameters
             [FromQuery]string packageType = null,
-            [FromQuery]string framework = null)
+            [FromQuery]string framework = null,
+            CancellationToken cancellationToken = default)
         {
             var includeSemVer2 = semVerLevel == "2.0.0";
-            var results = await _searchService.SearchAsync(
+
+            return await _searchService.SearchAsync(
                 query ?? string.Empty,
                 skip,
                 take,
                 prerelease,
                 includeSemVer2,
                 packageType,
-                framework);
-
-            return new SearchResponse(
-                totalHits: results.Count,
-                data: results.Select(ToSearchResult).ToList(),
-                context: SearchContext.Default(Url.RegistrationsBase()));
+                framework,
+                cancellationToken);
         }
 
-        public async Task<ActionResult<AutocompleteResult>> Autocomplete([FromQuery(Name = "q")] string query = null)
+        public async Task<ActionResult<AutocompleteResponse>> AutocompleteAsync(
+            [FromQuery(Name = "q")] string query = null,
+            CancellationToken cancellationToken = default)
         {
-            var results = await _searchService.AutocompleteAsync(query);
-
-            return new AutocompleteResult(
-                results.Count,
-                results,
-                AutocompleteContext.Default);
+            // TODO: Add other autocomplete parameters
+            // TODO: Support versions autocomplete.
+            // See: https://github.com/loic-sharma/BaGet/issues/291
+            return await _searchService.AutocompleteAsync(
+                query,
+                cancellationToken: cancellationToken);
         }
 
-        public async Task<ActionResult<DependentResult>> Dependents([FromQuery(Name = "packageId")] string packageId)
+        public async Task<ActionResult<DependentsResponse>> DependentsAsync(
+            [FromQuery] string packageId,
+            CancellationToken cancellationToken = default)
         {
-            var results = await _searchService.FindDependentsAsync(packageId);
-
-            return new DependentResult(results.Count, results);
-        }
-
-        private ProtocolSearchResult ToSearchResult(QuerySearchResult result)
-        {
-            var versions = result.Versions.Select(
-                v => new Protocol.SearchResultVersion(
-                    registrationLeafUrl: Url.PackageRegistration(result.Id, v.Version),
-                    version: v.Version,
-                    downloads: v.Downloads));
-
-            return new ProtocolSearchResult(
-                id: result.Id,
-                version: result.Version,
-                description: result.Description,
-                authors: result.Authors,
-                iconUrl: result.IconUrl,
-                licenseUrl: result.LicenseUrl,
-                projectUrl: result.ProjectUrl,
-                registrationUrl: Url.PackageRegistration(result.Id),
-                summary: result.Summary,
-                tags: result.Tags,
-                title: result.Title,
-                totalDownloads: result.TotalDownloads,
-                versions: versions.ToList());
+            // TODO: Add other dependents parameters.
+            return await _searchService.FindDependentsAsync(
+                packageId,
+                cancellationToken: cancellationToken);
         }
     }
 }

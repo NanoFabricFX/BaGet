@@ -1,26 +1,25 @@
 using System;
-using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
+using BaGet.Protocol.Models;
 
 namespace BaGet.Protocol
 {
-    /// <summary>
-    /// See: https://docs.microsoft.com/en-us/nuget/api/service-index
-    /// </summary>
-    public class ServiceIndexClient : IServiceIndexClient
+    public partial class NuGetClientFactory
     {
-        private readonly HttpClient _httpClient;
-
-        public ServiceIndexClient(HttpClient httpClient)
+        private class ServiceIndexClient : IServiceIndexClient
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        }
+            private readonly NuGetClientFactory _clientFactory;
 
-        public async Task<ServiceIndex> GetServiceIndexAsync(string indexUrl)
-        {
-            var response = await _httpClient.DeserializeUrlAsync<ServiceIndex>(indexUrl);
+            public ServiceIndexClient(NuGetClientFactory clientFactory)
+            {
+                _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
+            }
 
-            return response.GetResultOrThrow();
+            public async Task<ServiceIndexResponse> GetAsync(CancellationToken cancellationToken = default)
+            {
+                return await _clientFactory.GetServiceIndexAsync(cancellationToken);
+            }
         }
     }
 }

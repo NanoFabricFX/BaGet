@@ -2,29 +2,23 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
-using BaGet.AWS;
-using BaGet.AWS.Configuration;
-using BaGet.AWS.Extensions;
+using BaGet.Aws;
+using BaGet.Aws.Configuration;
+using BaGet.Aws.Extensions;
+using BaGet.Azure;
 using BaGet.Azure.Configuration;
 using BaGet.Azure.Extensions;
 using BaGet.Azure.Search;
-using BaGet.Core.Authentication;
-using BaGet.Core.Configuration;
-using BaGet.Core.Entities;
-using BaGet.Core.Extensions;
-using BaGet.Core.Indexing;
-using BaGet.Core.Mirror;
-using BaGet.Core.Search;
+using BaGet.Core;
+using BaGet.Core.Content;
 using BaGet.Core.Server.Extensions;
-using BaGet.Core.State;
-using BaGet.Core.Storage;
 using BaGet.Database.MySql;
 using BaGet.Database.PostgreSql;
 using BaGet.Database.Sqlite;
 using BaGet.Database.SqlServer;
-using BaGet.GCP.Configuration;
-using BaGet.GCP.Extensions;
-using BaGet.GCP.Services;
+using BaGet.Gcp.Configuration;
+using BaGet.Gcp.Extensions;
+using BaGet.Gcp.Services;
 using BaGet.Protocol;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -60,10 +54,35 @@ namespace BaGet.Extensions
 
             services.AddBaGetContext();
 
-            services.AddTransient<IPackageService, PackageService>();
+            services.AddTransient<IUrlGenerator, BaGetUrlGenerator>();
+
+            services.AddTransient<IPackageService>(provider =>
+            {
+                var databaseOptions = provider.GetRequiredService<IOptionsSnapshot<DatabaseOptions>>();
+
+                switch (databaseOptions.Value.Type)
+                {
+                    case DatabaseType.Sqlite:
+                    case DatabaseType.SqlServer:
+                    case DatabaseType.MySql:
+                    case DatabaseType.PostgreSql:
+                        return new PackageService(provider.GetRequiredService<IContext>());
+
+                    case DatabaseType.AzureTable:
+                        return provider.GetRequiredService<TablePackageService>();
+
+                    default:
+                        throw new InvalidOperationException(
+                            $"Unsupported database provider: {databaseOptions.Value.Type}");
+                }
+            });
+
             services.AddTransient<IPackageIndexingService, PackageIndexingService>();
             services.AddTransient<IPackageDeletionService, PackageDeletionService>();
             services.AddTransient<ISymbolIndexingService, SymbolIndexingService>();
+            services.AddTransient<IServiceIndexService, BaGetServiceIndex>();
+            services.AddTransient<IPackageContentService, DatabasePackageContentService>();
+            services.AddTransient<IPackageMetadataService, DatabasePackageMetadataService>();
             services.AddSingleton<IFrameworkCompatibilityService, FrameworkCompatibilityService>();
             services.AddMirrorServices();
 
@@ -96,6 +115,7 @@ namespace BaGet.Extensions
                     case DatabaseType.PostgreSql:
                         return provider.GetRequiredService<PostgreSqlContext>();
 
+                    case DatabaseType.AzureTable:
                     default:
                         throw new InvalidOperationException(
                             $"Unsupported database provider: {databaseOptions.Value.Type}");
@@ -168,6 +188,7 @@ namespace BaGet.Extensions
             services.AddTransient<IPackageStorageService, PackageStorageService>();
             services.AddTransient<ISymbolStorageService, SymbolStorageService>();
 
+            services.AddTableStorageService();
             services.AddBlobStorageService();
             services.AddS3StorageService();
             services.AddGoogleCloudStorageService();
@@ -206,12 +227,29 @@ namespace BaGet.Extensions
         {
             services.AddTransient<ISearchService>(provider =>
             {
-                var options = provider.GetRequiredService<IOptionsSnapshot<SearchOptions>>();
+                var searchOptions = provider.GetRequiredService<IOptionsSnapshot<SearchOptions>>();
 
-                switch (options.Value.Type)
+                switch (searchOptions.Value.Type)
                 {
                     case SearchType.Database:
-                        return provider.GetRequiredService<DatabaseSearchService>();
+                        var databaseOptions = provider.GetRequiredService<IOptionsSnapshot<DatabaseOptions>>();
+
+                        switch (databaseOptions.Value.Type)
+                        {
+                            case DatabaseType.MySql:
+                            case DatabaseType.PostgreSql:
+                            case DatabaseType.Sqlite:
+                            case DatabaseType.SqlServer:
+                                return provider.GetRequiredService<DatabaseSearchService>();
+
+                            case DatabaseType.AzureTable:
+                                return provider.GetRequiredService<TableSearchService>();
+
+                            default:
+                                throw new InvalidOperationException(
+                                    $"Database type '{databaseOptions.Value.Type}' cannot be used with " +
+                                    $"search type '{searchOptions.Value.Type}'");
+                        }
 
                     case SearchType.Azure:
                         return provider.GetRequiredService<AzureSearchService>();
@@ -221,13 +259,14 @@ namespace BaGet.Extensions
 
                     default:
                         throw new InvalidOperationException(
-                            $"Unsupported search service: {options.Value.Type}");
+                            $"Unsupported search service: {searchOptions.Value.Type}");
                 }
             });
 
             services.AddTransient<DatabaseSearchService>();
             services.AddSingleton<NullSearchService>();
             services.AddAzureSearch();
+            services.AddAzureTableSearch();
 
             return services;
         }
@@ -238,7 +277,7 @@ namespace BaGet.Extensions
         /// <param name="services">The defined services.</param>
         public static IServiceCollection AddMirrorServices(this IServiceCollection services)
         {
-            services.AddTransient<FakeMirrorService>();
+            services.AddTransient<NullMirrorService>();
             services.AddTransient<MirrorService>();
 
             services.AddTransient<IMirrorService>(provider =>
@@ -247,7 +286,7 @@ namespace BaGet.Extensions
 
                 if (!options.Value.Enabled)
                 {
-                    return provider.GetRequiredService<FakeMirrorService>();
+                    return provider.GetRequiredService<NullMirrorService>();
                 }
                 else
                 {
@@ -255,22 +294,16 @@ namespace BaGet.Extensions
                 }
             });
 
-            services.AddTransient<IPackageContentClient, PackageContentClient>();
-            services.AddTransient<IRegistrationClient, RegistrationClient>();
-            services.AddTransient<IServiceIndexClient, ServiceIndexClient>();
-            services.AddTransient<IPackageMetadataService, PackageMetadataService>();
-
-            services.AddSingleton<IServiceIndexService>(provider =>
+            services.AddSingleton<NuGetClient>();
+            services.AddSingleton(provider =>
             {
+                var httpClient = provider.GetRequiredService<HttpClient>();
                 var options = provider.GetRequiredService<IOptions<MirrorOptions>>();
-                var serviceIndexClient = provider.GetRequiredService<IServiceIndexClient>();
 
-                return new ServiceIndexService(
-                    options.Value.PackageSource.ToString(),
-                    serviceIndexClient);
+                return new NuGetClientFactory(
+                    httpClient,
+                    options.Value.PackageSource.ToString());
             });
-
-            services.AddTransient<IPackageDownloader, PackageDownloader>();
 
             services.AddSingleton(provider =>
             {

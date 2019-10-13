@@ -1,4 +1,5 @@
 import { HtmlRenderer, Parser } from 'commonmark';
+import { config } from '../config';
 import { Icon } from 'office-ui-fabric-react/lib/Icon';
 import * as React from 'react';
 import { Link } from 'react-router-dom';
@@ -24,6 +25,8 @@ interface IDisplayPackageProps {
 interface IPackage {
   id: string;
   latestVersion: string;
+  hasReadme: boolean;
+  description: string;
   readme: string;
   lastUpdate: Date;
   iconUrl: string;
@@ -38,6 +41,7 @@ interface IPackage {
   authors: string;
   tags: string[];
   version: string;
+  normalizedVersion: string;
   versions: IPackageVersion[];
   dependencyGroups: Registration.IDependencyGroup[];
 }
@@ -53,6 +57,8 @@ interface IDisplayPackageState {
 }
 
 class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPackageState> {
+
+  private readonly defaultIconUrl: string = 'https://www.nuget.org/Content/gallery/img/default-package-icon-256x256.png';
 
   private id: string;
   private version?: string;
@@ -71,7 +77,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
     this.registrationController = new AbortController();
     this.readmeController = new AbortController();
 
-    this.id = props.match.params.id;
+    this.id = props.match.params.id.toLowerCase();
     this.version = props.match.params.version;
     this.state = {package: undefined};
   }
@@ -91,7 +97,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
       this.registrationController = new AbortController();
       this.readmeController = new AbortController();
 
-      this.id = this.props.match.params.id;
+      this.id = this.props.match.params.id.toLowerCase();
       this.version = this.props.match.params.version;
       this.setState({package: undefined});
       this.componentDidMount();
@@ -99,7 +105,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
   }
 
   public componentDidMount() {
-    const url = `/v3/registration/${this.id}/index.json`;
+    const url = `${config.apiUrl}/v3/registration/${this.id}/index.json`;
 
     fetch(url, {signal: this.registrationController.signal}).then(response => {
       return response.json();
@@ -113,14 +119,15 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
       const versions: IPackageVersion[] = [];
 
       for (const entry of results.items[0].items) {
+        const normalizedVersion = this.normalizeVersion(entry.catalogEntry.version);
         versions.push({
           date: new Date(entry.catalogEntry.published),
           downloads: entry.catalogEntry.downloads,
-          version: entry.catalogEntry.version,
+          version: normalizedVersion,
         });
 
-        if ((!currentItem && entry.catalogEntry.version === latestVersion) ||
-          (this.version && entry.catalogEntry.version === this.version)) {
+        if ((!currentItem && normalizedVersion === latestVersion) ||
+          (this.version && normalizedVersion === this.version)) {
           currentItem = entry;
         }
 
@@ -132,10 +139,6 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
 
       if (currentItem && lastUpdate) {
         let readme = "";
-        if (!currentItem.catalogEntry.hasReadme) {
-          readme = currentItem.catalogEntry.description;
-        }
-
         const isDotnetTool = (currentItem.catalogEntry.packageTypes &&
           currentItem.catalogEntry.packageTypes.indexOf("DotnetTool") !== -1);
 
@@ -146,6 +149,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
             isDotnetTool,
             lastUpdate,
             latestVersion,
+            normalizedVersion: this.normalizeVersion(currentItem.catalogEntry.version),
             readme,
             totalDownloads: results.totalDownloads,
             versions
@@ -153,7 +157,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
         });
 
         if (currentItem.catalogEntry.hasReadme) {
-          const readmeUrl = `/v3/package/${this.id}/${currentItem.catalogEntry.version}/readme`;
+          const readmeUrl = `${config.apiUrl}/v3/package/${this.id}/${currentItem.catalogEntry.version}/readme`;
 
           fetch(readmeUrl, {signal: this.readmeController.signal}).then(response => {
             return response.text();
@@ -182,7 +186,11 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
       return (
         <div className="row display-package">
           <aside className="col-sm-1 package-icon">
-            <img src={this.state.package.iconUrl} className="img-responsive" />
+            <img
+              src={this.state.package.iconUrl}
+              className="img-responsive"
+              onError={this.loadDefaultIcon}
+              alt="The package icon" />
           </aside>
           <article className="col-sm-8 package-details-main">
             <div className="package-title">
@@ -193,10 +201,22 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
 
             </div>
 
-            <InstallationInfo id={this.state.package.id} version={this.state.package.version} isDotnetTool={this.state.package.isDotnetTool} />
+            <InstallationInfo id={this.state.package.id} version={this.state.package.normalizedVersion} isDotnetTool={this.state.package.isDotnetTool} />
 
-            {/* TODO: Fix this */}
-            <div dangerouslySetInnerHTML={{ __html: this.state.package.readme }} />
+            {(() => {
+              if (this.state.package.hasReadme) {
+                // TODO: Fix this
+                return (
+                  <div dangerouslySetInnerHTML={{ __html: this.state.package.readme }} />
+                );
+              } else {
+                return (
+                  <div className="package-description">
+                    {this.state.package.description}
+                  </div>
+                );
+              }
+            })()}
 
             <Dependents packageId={this.id} />
             <Dependencies dependencyGroups={this.state.package.dependencyGroups} />
@@ -262,8 +282,19 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
     }
   }
 
+  private loadDefaultIcon = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    e.currentTarget.src = this.defaultIconUrl;
+  }
+
   private dateToString(date: Date): string {
     return `${date.getMonth()+1}/${date.getDate()}/${date.getFullYear()}`;
+  }
+
+  private normalizeVersion(version: string): string {
+    const buildMetadataStart = version.indexOf('+');
+    return buildMetadataStart === -1
+      ? version
+      : version.substring(0, buildMetadataStart);
   }
 }
 

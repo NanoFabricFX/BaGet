@@ -3,8 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using BaGet.Core.Entities;
-using BaGet.Core.State;
+using BaGet.Core;
 using Microsoft.Azure.Search;
 using Microsoft.Azure.Search.Models;
 using Microsoft.Extensions.Logging;
@@ -70,7 +69,7 @@ namespace BaGet.Azure.Search
         {
             if (packageId == null) throw new ArgumentNullException(nameof(packageId));
 
-            var packages = await _packageService.FindAsync(packageId);
+            var packages = await _packageService.FindAsync(packageId, includeUnlisted: false);
 
             if (packages.Count == 0)
             {
@@ -116,7 +115,7 @@ namespace BaGet.Azure.Search
 
                 document.Key = $"{encodedId}-{searchFilters}";
                 document.Id = latest.Id;
-                document.Version = latest.VersionString;
+                document.Version = latest.Version.ToFullString();
                 document.Description = latest.Description;
                 document.Authors = latest.Authors;
                 document.IconUrl = latest.IconUrlString;
@@ -128,7 +127,7 @@ namespace BaGet.Azure.Search
                 document.Title = latest.Title;
                 document.TotalDownloads = versions.Sum(p => p.Downloads);
                 document.DownloadsMagnitude = document.TotalDownloads.ToString().Length;
-                document.Versions = versions.Select(p => p.VersionString).ToArray();
+                document.Versions = versions.Select(p => p.Version.ToFullString()).ToArray();
                 document.VersionDownloads = versions.Select(p => p.Downloads.ToString()).ToArray();
                 document.Dependencies = dependencies;
                 document.PackageTypes = latest.PackageTypes.Select(t => t.Name).ToArray();
