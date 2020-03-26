@@ -25,6 +25,8 @@ export interface ICatalogEntry {
   iconUrl: string;
   projectUrl: string;
   licenseUrl: string;
+  releaseNotes: string;
+  listed: boolean;
   packageTypes: string[];
   repositoryUrl: string;
   repositoryType: string;

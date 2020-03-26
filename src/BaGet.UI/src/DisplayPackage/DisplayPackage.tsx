@@ -1,17 +1,20 @@
-import { HtmlRenderer, Parser } from 'commonmark';
-import { config } from '../config';
 import { Icon } from 'office-ui-fabric-react/lib/Icon';
 import * as React from 'react';
-import { Link } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import timeago from 'timeago.js';
+import { coerce, eq, gt, SemVer } from 'semver';
+
+import { config } from '../config';
 import Dependencies from './Dependencies';
 import Dependents from './Dependents';
-import InstallationInfo from './InstallationInfo';
+import { PackageType, InstallationInfo } from './InstallationInfo';
 import LicenseInfo from './LicenseInfo';
 import * as Registration from './Registration';
 import SourceRepository from './SourceRepository';
+import { Versions, IPackageVersion } from './Versions';
 
 import './DisplayPackage.css';
+import DefaultPackageIcon from "../default-package-icon-256x256.png";
 
 interface IDisplayPackageProps {
   match: {
@@ -24,7 +27,6 @@ interface IDisplayPackageProps {
 
 interface IPackage {
   id: string;
-  latestVersion: string;
   hasReadme: boolean;
   description: string;
   readme: string;
@@ -35,8 +37,9 @@ interface IPackage {
   downloadUrl: string;
   repositoryUrl: string;
   repositoryType: string;
+  releaseNotes: string;
   totalDownloads: number;
-  isDotnetTool: boolean;
+  packageType: PackageType;
   downloads: number;
   authors: string;
   tags: string[];
@@ -46,24 +49,20 @@ interface IPackage {
   dependencyGroups: Registration.IDependencyGroup[];
 }
 
-interface IPackageVersion {
-  version: string;
-  downloads: number;
-  date: Date;
-}
-
 interface IDisplayPackageState {
+  loading: boolean;
   package?: IPackage;
 }
 
 class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPackageState> {
 
-  private readonly defaultIconUrl: string = 'https://www.nuget.org/Content/gallery/img/default-package-icon-256x256.png';
+  private static readonly initialState: IDisplayPackageState = {
+    loading: true,
+    package: undefined,
+  };
 
   private id: string;
-  private version?: string;
-  private parser: Parser;
-  private htmlRenderer: HtmlRenderer;
+  private version: SemVer | null;
 
   private registrationController: AbortController;
   private readmeController: AbortController;
@@ -71,15 +70,12 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
   constructor(props: IDisplayPackageProps) {
     super(props);
 
-    this.parser = new Parser();
-    this.htmlRenderer = new HtmlRenderer();
-
     this.registrationController = new AbortController();
     this.readmeController = new AbortController();
 
     this.id = props.match.params.id.toLowerCase();
-    this.version = props.match.params.version;
-    this.state = {package: undefined};
+    this.version = coerce(props.match.params.version);
+    this.state = DisplayPackage.initialState;
   }
 
   public componentWillUnmount() {
@@ -98,8 +94,8 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
       this.readmeController = new AbortController();
 
       this.id = this.props.match.params.id.toLowerCase();
-      this.version = this.props.match.params.version;
-      this.setState({package: undefined});
+      this.version = coerce(this.props.match.params.version);
+      this.setState(DisplayPackage.initialState);
       this.componentDidMount();
     }
   }
@@ -108,26 +104,44 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
     const url = `${config.apiUrl}/v3/registration/${this.id}/index.json`;
 
     fetch(url, {signal: this.registrationController.signal}).then(response => {
-      return response.json();
+      return (response.ok) ? response.json() : null;
     }).then(json => {
+      if (!json) {
+        this.setState(prevState => {
+          return { ...prevState, loading: false };
+        });
+
+        return;
+      }
+
       const results = json as Registration.IRegistrationIndex;
 
-      const latestVersion = results.items[0].upper;
       let currentItem: Registration.IRegistrationPageItem | undefined;
       let lastUpdate: Date | undefined;
 
+      const latestVersion = this.latestVersion(results);
       const versions: IPackageVersion[] = [];
 
       for (const entry of results.items[0].items) {
+        if (!entry.catalogEntry.listed) continue;
+
         const normalizedVersion = this.normalizeVersion(entry.catalogEntry.version);
+        const coercedVersion = coerce(entry.catalogEntry.version);
+
+        if (coercedVersion === null) continue;
+
+        const isCurrent = latestVersion !== null && coercedVersion !== null
+          ? eq(coercedVersion, !!this.version ? this.version : latestVersion)
+          : false;
+
         versions.push({
           date: new Date(entry.catalogEntry.published),
           downloads: entry.catalogEntry.downloads,
           version: normalizedVersion,
+          selected: isCurrent,
         });
 
-        if ((!currentItem && normalizedVersion === latestVersion) ||
-          (this.version && normalizedVersion === this.version)) {
+        if (isCurrent) {
           currentItem = entry;
         }
 
@@ -137,18 +151,26 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
         }
       }
 
-      if (currentItem && lastUpdate) {
+      if (latestVersion && currentItem && lastUpdate) {
         let readme = "";
+
         const isDotnetTool = (currentItem.catalogEntry.packageTypes &&
           currentItem.catalogEntry.packageTypes.indexOf("DotnetTool") !== -1);
+        const isDotnetTemplate = (currentItem.catalogEntry.packageTypes &&
+            currentItem.catalogEntry.packageTypes.indexOf("Template") !== -1);
+        const packageType = isDotnetTool
+          ? PackageType.DotnetTool
+          : isDotnetTemplate
+            ? PackageType.DotnetTemplate
+            : PackageType.Dependency;
 
         this.setState({
+          loading: false,
           package: {
             ...currentItem.catalogEntry,
             downloadUrl: currentItem.packageContent,
-            isDotnetTool,
+            packageType,
             lastUpdate,
-            latestVersion,
             normalizedVersion: this.normalizeVersion(currentItem.catalogEntry.version),
             readme,
             totalDownloads: results.totalDownloads,
@@ -164,9 +186,8 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
           }).then(result => {
             this.setState(prevState => {
               const state = {...prevState};
-              const markdown = this.parser.parse(result);
 
-              state.package!.readme = this.htmlRenderer.render(markdown);
+              state.package!.readme = result;
 
               return state;
             });
@@ -178,16 +199,20 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
   }
 
   public render() {
-    if (!this.state.package) {
-        return (
-          <div>...</div>
-        );
+    if (this.state.loading) {
+      return (
+        <div>...</div>
+      );
+    } else if (!this.state.package) {
+      return (
+        <div>Could not find package '{this.id}'.</div>
+      );
     } else {
       return (
         <div className="row display-package">
           <aside className="col-sm-1 package-icon">
             <img
-              src={this.state.package.iconUrl}
+              src={this.state.package.iconUrl || DefaultPackageIcon}
               className="img-responsive"
               onError={this.loadDefaultIcon}
               alt="The package icon" />
@@ -198,16 +223,19 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
                 {this.state.package.id}
                 <small className="text-nowrap">{this.state.package.version}</small>
               </h1>
-
             </div>
 
-            <InstallationInfo id={this.state.package.id} version={this.state.package.normalizedVersion} isDotnetTool={this.state.package.isDotnetTool} />
+            <InstallationInfo
+              id={this.state.package.id}
+              version={this.state.package.normalizedVersion}
+              packageType={this.state.package.packageType} />
 
             {(() => {
               if (this.state.package.hasReadme) {
-                // TODO: Fix this
                 return (
-                  <div dangerouslySetInnerHTML={{ __html: this.state.package.readme }} />
+                  <ExpandableSection title="Documentation" expanded={true}>
+                    <ReactMarkdown source={this.state.package.readme} />
+                  </ExpandableSection>
                 );
               } else {
                 return (
@@ -218,8 +246,23 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
               }
             })()}
 
-            <Dependents packageId={this.id} />
-            <Dependencies dependencyGroups={this.state.package.dependencyGroups} />
+            <ExpandableSection title="Dependents" expanded={false}>
+              <Dependents packageId={this.state.package.id} />
+            </ExpandableSection>
+
+            {this.state.package.releaseNotes &&
+              <ExpandableSection title="Release Notes" expanded={false}>
+                <div className="package-release-notes" >{this.state.package.releaseNotes}</div>
+              </ExpandableSection>
+            }
+
+            <ExpandableSection title="Dependencies" expanded={false}>
+              <Dependencies dependencyGroups={this.state.package.dependencyGroups} />
+            </ExpandableSection>
+
+            <ExpandableSection title="Versions" expanded={true}>
+              <Versions packageId={this.id} versions={this.state.package.versions} />
+            </ExpandableSection>
           </article>
           <aside className="col-sm-3 package-details-info">
             <div>
@@ -261,18 +304,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
             </div>
 
             <div>
-              <h2>Versions</h2>
-
-              {this.state.package.versions.map(value => (
-                <div key={value.version}>
-                  <span><Link to={`/packages/${this.state.package!.id}/${value.version}`}>{value.version}</Link>: </span>
-                  <span>{this.dateToString(value.date)}</span>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <h1>Authors</h1>
+              <h2>Authors</h2>
 
               <p>{(!this.state.package.authors) ? 'Unknown' : this.state.package.authors}</p>
             </div>
@@ -283,11 +315,7 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
   }
 
   private loadDefaultIcon = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    e.currentTarget.src = this.defaultIconUrl;
-  }
-
-  private dateToString(date: Date): string {
-    return `${date.getMonth()+1}/${date.getDate()}/${date.getFullYear()}`;
+    e.currentTarget.src = DefaultPackageIcon;
   }
 
   private normalizeVersion(version: string): string {
@@ -296,6 +324,70 @@ class DisplayPackage extends React.Component<IDisplayPackageProps, IDisplayPacka
       ? version
       : version.substring(0, buildMetadataStart);
   }
+
+  private latestVersion(index: Registration.IRegistrationIndex): SemVer | null {
+    let latestVersion: SemVer | null = null;
+    for (const entry of index.items[0].items) {
+      if (!entry.catalogEntry.listed) continue;
+
+      let entryVersion = coerce(entry.catalogEntry.version);
+      if (!!entryVersion) {
+        if (latestVersion === null || gt(entryVersion, latestVersion)) {
+          latestVersion = entryVersion;
+        }
+      }
+    }
+
+    return latestVersion;
+  }
+}
+
+interface IExpandableSectionProps {
+  title: string;
+  expanded: boolean;
+}
+
+interface IExpandableSectionState {
+  expanded: boolean;
+}
+
+class ExpandableSection extends React.Component<IExpandableSectionProps, IExpandableSectionState> {
+  constructor(props: IExpandableSectionProps) {
+    super(props);
+
+    this.state = { ...props };
+  }
+
+  public render() {
+    if (this.state.expanded) {
+      return (
+        <div className="expandable-section">
+          <h2>
+            <button type="button" onClick={this.collapse} className="link-button">
+              <Icon iconName="ChevronDown" className="ms-Icon" />
+              <span>{this.props.title}</span>
+            </button>
+          </h2>
+
+          {this.props.children}
+        </div>
+      );
+    } else {
+      return (
+        <div className="expandable-section">
+          <h2>
+            <button type="button" onClick={this.expand} className="link-button">
+              <Icon iconName="ChevronRight" className="ms-Icon" />
+              <span>{this.props.title}</span>
+            </button>
+          </h2>
+        </div>
+      );
+    }
+  }
+
+  private collapse = () => this.setState({expanded: false});
+  private expand = () => this.setState({expanded: true});
 }
 
 export default DisplayPackage;

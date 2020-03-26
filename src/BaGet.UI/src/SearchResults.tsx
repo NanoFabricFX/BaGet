@@ -4,6 +4,7 @@ import { Checkbox, Dropdown, IDropdownOption, SelectableOptionMenuItemType } fro
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 import './SearchResults.css';
+import DefaultPackageIcon from "./default-package-icon-256x256.png";
 
 interface ISearchResultsProps {
   input: string;
@@ -32,7 +33,6 @@ interface ISearchResponse {
 
 class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsState> {
 
-  private readonly defaultIconUrl: string = 'https://www.nuget.org/Content/gallery/img/default-package-icon-256x256.png';
   private resultsController?: AbortController;
 
   constructor(props: ISearchResultsProps) {
@@ -87,7 +87,8 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
                 options={[
                   {key: 'any', text: 'Any'},
                   {key: 'dependency', text: 'Dependency'},
-                  {key: 'dotnettool', text: '.NET Tool'}
+                  {key: 'dotnettool', text: '.NET Tool'},
+                  {key: 'template', text: '.NET Template'},
                 ]}
               />
             </div>
@@ -159,7 +160,7 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
           <div key={value.id} className="row search-result">
             <div className="col-sm-1 hidden-xs hidden-sm">
               <img
-                src={value.iconUrl || this.defaultIconUrl}
+                src={value.iconUrl || DefaultPackageIcon}
                 className="package-icon img-responsive"
                 onError={this.loadDefaultIcon}
                 alt="The package icon" />
@@ -182,12 +183,14 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
                     Latest version: {value.version}
                   </span>
                 </li>
-                <li>
-                  <span className="tags">
-                    <Icon iconName="Tag" className="ms-Icon" />
-                    {value.tags.join(' ')}
-                  </span>
-                </li>
+                {value.tags.length > 0 &&
+                  <li>
+                    <span className="tags">
+                      <Icon iconName="Tag" className="ms-Icon" />
+                      {value.tags.join(' ')}
+                    </span>
+                  </li>
+                }
               </ul>
               <div>
                 {value.description}
@@ -216,8 +219,14 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
     const url = this.buildUrl(query, includePrerelease, packageType, targetFramework);
 
     fetch(url, {signal: this.resultsController.signal}).then(response => {
-      return response.json();
+      return response.ok
+        ? response.json()
+        : null;
     }).then(resultsJson => {
+      if (!resultsJson) {
+        return;
+      }
+
       const results = resultsJson as ISearchResponse;
 
       this.setState({
@@ -225,6 +234,12 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
         items: results.data,
         targetFramework,
       });
+    })
+    .catch((e) => {
+      var ex = e as DOMException;
+      if (!ex || ex.code !== DOMException.ABORT_ERR) {
+        console.log("Unexpected error on search", e);
+      }
     });
   }
 
@@ -257,7 +272,7 @@ class SearchResults extends React.Component<ISearchResultsProps, ISearchResultsS
   }
 
   private loadDefaultIcon = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    e.currentTarget.src = this.defaultIconUrl;
+    e.currentTarget.src = DefaultPackageIcon;
   }
 
   private onChangePackageType = (e: React.FormEvent<HTMLDivElement>, option?: IDropdownOption) : void => {

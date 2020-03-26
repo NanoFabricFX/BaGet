@@ -1,5 +1,3 @@
-using BaGet.Azure.Configuration;
-using BaGet.Azure.Search;
 using BaGet.Core;
 using Microsoft.Azure.Cosmos.Table;
 using Microsoft.Azure.Search;
@@ -7,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.WindowsAzure.Storage.Blob;
 
-namespace BaGet.Azure.Extensions
+namespace BaGet.Azure
 {
     using CloudStorageAccount = Microsoft.WindowsAzure.Storage.CloudStorageAccount;
     using StorageCredentials = Microsoft.WindowsAzure.Storage.Auth.StorageCredentials;
@@ -33,6 +31,7 @@ namespace BaGet.Azure.Extensions
             });
 
             services.AddTransient<TablePackageService>();
+            services.AddTransient<TableOperationBuilder>();
 
             return services;
         }
@@ -42,6 +41,11 @@ namespace BaGet.Azure.Extensions
             services.AddSingleton(provider =>
             {
                 var options = provider.GetRequiredService<IOptions<BlobStorageOptions>>().Value;
+
+                if (!string.IsNullOrEmpty(options.ConnectionString))
+                {
+                    return CloudStorageAccount.Parse(options.ConnectionString);
+                }
 
                 return new CloudStorageAccount(
                     new StorageCredentials(
@@ -74,8 +78,10 @@ namespace BaGet.Azure.Extensions
 
         public static IServiceCollection AddAzureSearch(this IServiceCollection services)
         {
-            services.AddTransient<BatchIndexer>();
+            services.AddTransient<AzureSearchBatchIndexer>();
             services.AddTransient<AzureSearchService>();
+            services.AddTransient<AzureSearchIndexer>();
+            services.AddTransient<IndexActionBuilder>();
 
             services.AddSingleton(provider =>
             {
