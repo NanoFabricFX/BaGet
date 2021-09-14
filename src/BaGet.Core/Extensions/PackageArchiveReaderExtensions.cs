@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using NuGet.Common;
 using NuGet.Packaging;
 
 namespace BaGet.Core
@@ -12,18 +13,8 @@ namespace BaGet.Core
 
     public static class PackageArchiveReaderExtensions
     {
-        private static readonly string[] OrderedReadmeFileNames = new[]
-        {
-            "readme.md",
-            "readme.txt",
-        };
-
-        private static readonly HashSet<string> ReadmeFileNames = new HashSet<string>(
-            OrderedReadmeFileNames,
-            StringComparer.OrdinalIgnoreCase);
-
         public static bool HasReadme(this PackageArchiveReader package)
-            => package.GetFiles().Any(ReadmeFileNames.Contains);
+            => !string.IsNullOrEmpty(package.NuspecReader.GetReadme());
 
         public static bool HasEmbeddedIcon(this PackageArchiveReader package)
             => !string.IsNullOrEmpty(package.NuspecReader.GetIcon());
@@ -32,26 +23,22 @@ namespace BaGet.Core
             this PackageArchiveReader package,
             CancellationToken cancellationToken)
         {
-            var packageFiles = package.GetFiles();
-
-            foreach (var readmeFileName in OrderedReadmeFileNames)
+            var readmePath = package.NuspecReader.GetReadme();
+            if (readmePath == null)
             {
-                var readmePath = packageFiles.FirstOrDefault(f => f.Equals(readmeFileName, StringComparison.OrdinalIgnoreCase));
-
-                if (readmePath != null)
-                {
-                    return await package.GetStreamAsync(readmePath, cancellationToken);
-                }
+                throw new InvalidOperationException("Package does not have a readme!");
             }
 
-            throw new InvalidOperationException("Package does not have a readme!");
+            return await package.GetStreamAsync(readmePath, cancellationToken);
         }
 
         public async static Task<Stream> GetIconAsync(
             this PackageArchiveReader package,
             CancellationToken cancellationToken)
         {
-            return await package.GetStreamAsync(package.NuspecReader.GetIcon(), cancellationToken);
+            return await package.GetStreamAsync(
+                PathUtility.StripLeadingDirectorySeparators(package.NuspecReader.GetIcon()),
+                cancellationToken);
         }
 
         public static Package GetPackageMetadata(this PackageArchiveReader packageReader)
